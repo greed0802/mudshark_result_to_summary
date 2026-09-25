@@ -90,6 +90,57 @@ def trap_checks():
     return problems
 
 
+def negative_test():
+    """Inflated trench cut (as seen on the Bulla Road export) must raise the
+    red CHECK note in the workbook and a console warning."""
+    try:
+        import openpyxl
+    except ImportError:
+        print("(openpyxl not available - negative test skipped)")
+        return 0
+    variant = os.path.join(HERE, "fixture_inflated.xlsx")
+    out = os.path.join(HERE, "actual_inflated.xlsx")
+    wb = openpyxl.load_workbook(FIXTURE)
+    ws = wb["Trench Run Strata Operations"]
+    ws.cell(row=3, column=2, value=1925.763693)   # exported
+    ws.cell(row=3, column=3, value=None)          # reused
+    ws.cell(row=3, column=4, value=1925.763693)   # cut
+    # the deeper-level per-run rows should be ignored by the level filter
+    for r in (4, 5):
+        for c in (2, 3, 4):
+            ws.cell(row=r, column=c, value=None)
+    wb.save(variant)
+    r = subprocess.run([sys.executable,
+                        os.path.join(ROOT, "mudshark_summary.py"),
+                        variant, "-o", out],
+                       capture_output=True, text=True)
+    problems = 0
+    if "bigger than TOTAL SITE CUT" not in r.stdout:
+        print("  NEG-FAIL: console warning missing:\n" + r.stdout)
+        problems += 1
+    matrix = sheet_matrix(out)
+    notes = [v for rn, cells in matrix.items() for v in cells.values()
+             if isinstance(v, str) and v.startswith("!! CHECK:")]
+    if not notes:
+        print("  NEG-FAIL: red CHECK note row missing in workbook")
+        problems += 1
+    elif "row" not in notes[0]:
+        print("  NEG-FAIL: note should list the rows used: %r" % notes[0][:120])
+        problems += 1
+    so_label = next(rn for rn, cells in matrix.items()
+                    if cells.get(1) == "SITE CUT ONLY")
+    so = matrix[so_label]
+    if not (so.get(2, 1) < 0 and so.get(4, 1) < 0):
+        print("  NEG-FAIL: SITE CUT ONLY should be negative here: %r" % so)
+        problems += 1
+    for f in (variant, out):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    return problems
+
+
 def main():
     print("== running mudshark_summary.py on fixture ==")
     r = subprocess.run([sys.executable,
@@ -114,6 +165,13 @@ def main():
         print("FAILED: %d trap check(s)" % problems)
         return 1
     print("OK - grouped detail rows correctly ignored.")
+
+    print("== inflated trench cut sanity warning ==")
+    problems = negative_test()
+    if problems:
+        print("FAILED: %d negative check(s)" % problems)
+        return 1
+    print("OK - anomaly produces red CHECK note + console warning.")
 
     print("== validating output with openpyxl ==")
     try:
