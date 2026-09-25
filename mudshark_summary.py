@@ -376,30 +376,37 @@ def extract(book, warnings):
 # Build the Summary rows
 # ===========================================================================
 
-BOLD = 1
+# Style ids (see STYLES xml below)
+NORMAL, BOLD = 0, 1
+YELLOW, BLUE = 2, 3            # yellow totals band / blue data band
+YELLOW_BOLD, BLUE_BOLD = 4, 5
+BOLD_BORDER, BORDER = 6, 7
 
-# A helper "cell": (column, value, style)
+
 def build_summary_rows(data):
-    """Return a list of rows; each row is {col_index: (value, style)}."""
+    """Return (rows, merges): rows is [{col: (value, style)}], merges is a
+    list of merged-range refs like 'B13:D13'."""
     out = []
+    merges = []
 
     def add_row(cells=None):
         out.append(cells or {})
 
-    def add_op_row(label, values):
-        row = {1: (label, BOLD)}
-        for col, v in values.items():
-            if v is not None:
-                row[col] = (v, 0)
+    def band(label, values, style):
+        """A full-width A..H band: label in A, values elsewhere (blanks get
+        the band fill too, like the hand-made Summary)."""
+        row = {1: (label, style)}
+        for col in range(2, 9):
+            row[col] = (values.get(col), style)
         add_row(row)
 
     # Header ----------------------------------------------------------------
-    add_row({i + 1: (h, BOLD) for i, h in enumerate(XLSX_HEADERS)})
+    add_row({i + 1: (h, BORDER) for i, h in enumerate(XLSX_HEADERS)})
 
     # TOTAL SITE CUT ----------------------------------------------------------
     tsc = data.get("total_site_cut")
-    add_op_row("TOTAL SITE CUT",
-               {c: num(tsc, c) for c in range(2, 9)} if tsc else {})
+    band("TOTAL SITE CUT",
+         {c: num(tsc, c) for c in range(2, 9)} if tsc else {}, YELLOW)
 
     # SITE CUT ONLY / TRENCH CUT ----------------------------------------------
     tc = data.get("trench_cut")
@@ -411,52 +418,60 @@ def build_summary_rows(data):
             5: 0.0, 6: 0.0, 7: 0.0,
         }
         site_only[8] = snap_zero(site_only[3] - site_only[4])
-        add_op_row("SITE CUT ONLY", site_only)
-        add_op_row("TRENCH CUT", {
+        band("SITE CUT ONLY", site_only, BLUE)
+        band("TRENCH CUT", {
             2: tc["exported"], 3: tc["reused"], 4: tc["cut"],
             5: 0.0, 6: 0.0, 7: 0.0,
             8: snap_zero(tc["reused"] - tc["cut"]),
-        })
+        }, BLUE)
     else:
-        add_op_row("SITE CUT ONLY", {})
-        add_op_row("TRENCH CUT", {})
+        band("SITE CUT ONLY", {}, BLUE)
+        band("TRENCH CUT", {}, BLUE)
 
     add_row()
     add_row()
 
     # TOTAL TRENCH FILL -------------------------------------------------------
     tf = data.get("trench_fill")
-    add_op_row("TOTAL TRENCH FILL", {c: tf.get(c) for c in (6, 7, 8)}
-               if tf else {})
+    band("TOTAL TRENCH FILL", {c: tf.get(c) for c in (6, 7, 8)}
+         if tf else {}, YELLOW)
 
     # Trench run materials ----------------------------------------------------
     for name, cells in data.get("materials", []):
-        add_op_row(name, {c: num(cells, c) for c in (6, 7, 8)})
+        band(name, {c: num(cells, c) for c in (6, 7, 8)}, BLUE)
 
     add_row()
     add_row()
 
     # TOTAL TRENCH LENGTH -----------------------------------------------------
-    add_row({1: ("TOTAL TRENCH LENGTH", BOLD), 2: ("SUMMARY", BOLD)})
+    r = len(out) + 1
+    add_row({1: ("TOTAL TRENCH LENGTH", YELLOW_BOLD),
+             2: ("SUMMARY", YELLOW_BOLD),
+             3: (None, YELLOW_BOLD),
+             4: (None, YELLOW_BOLD)})
+    merges.append("B%d:D%d" % (r, r))
 
     first_category = True
     for text in data.get("trench_lines", []):
-        row = {1: (text, 0)}
         m = TRENCHNET_RE.match(text)
         if m:
             name, count, item_word, length = m.groups()
-            row[2] = (name, 0)
-            row[3] = ("%s %s" % (count, item_word.lower()), 0)
-            row[4] = ("%sm" % length, 0)
+            add_row({1: (text, BLUE),
+                     2: (name, BLUE),
+                     3: ("%s %s" % (count, item_word.lower()), BLUE),
+                     4: ("%sm" % length, BLUE)})
         elif text.lstrip().lower().startswith("category"):
+            row = {1: (text, YELLOW_BOLD)}
             if first_category:
-                row[2] = ("PIPE/PIT NAME", BOLD)
-                row[3] = ("COUNTS", BOLD)
-                row[4] = ("LENGTHS", BOLD)
+                row[2] = ("PIPE/PIT NAME", BOLD_BORDER)
+                row[3] = ("COUNTS", BOLD_BORDER)
+                row[4] = ("LENGTHS", BOLD_BORDER)
                 first_category = False
-        add_row(row)
+            add_row(row)
+        else:
+            add_row({1: (text, NORMAL)})
 
-    return out
+    return out, merges
 
 
 # ===========================================================================
@@ -480,7 +495,7 @@ def _fmt_number(v):
     return text[:-2] if text.endswith(".0") else text
 
 
-def build_sheet_xml(rows):
+def build_sheet_xml(rows, merges=None):
     parts = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
              '<worksheet xmlns="http://schemas.openxmlformats.org/'
              'spreadsheetml/2006/main"><sheetData>']
@@ -491,10 +506,12 @@ def build_sheet_xml(rows):
         parts.append('<row r="%d">' % r_idx)
         for col in sorted(row):
             value, style = row[col]
-            if value is None:
-                continue
             ref = "%s%d" % (_col_letter(col), r_idx)
             s_attr = ' s="%d"' % style if style else ""
+            if value is None:
+                if style:  # styled but empty cell (keeps the band colour)
+                    parts.append('<c r="%s"%s/>' % (ref, s_attr))
+                continue
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 parts.append('<c r="%s"%s><v>%s</v></c>'
                              % (ref, s_attr, _fmt_number(value)))
@@ -503,7 +520,13 @@ def build_sheet_xml(rows):
                 parts.append('<c r="%s"%s t="inlineStr"><is><t xml:space='
                              '"preserve">%s</t></is></c>' % (ref, s_attr, text))
         parts.append('</row>')
-    parts.append('</sheetData></worksheet>')
+    parts.append('</sheetData>')
+    if merges:
+        parts.append('<mergeCells count="%d">' % len(merges))
+        for ref in merges:
+            parts.append('<mergeCell ref="%s"/>' % ref)
+        parts.append('</mergeCells>')
+    parts.append('</worksheet>')
     return "".join(parts)
 
 
@@ -544,24 +567,51 @@ STYLES = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
           '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml'
           '/2006/main">'
           '<fonts count="2">'
-          '<font><sz val="11"/><name val="Calibri"/></font>'
-          '<font><b/><sz val="11"/><name val="Calibri"/></font>'
+          '<font><sz val="8"/><name val="Microsoft Sans Serif"/></font>'
+          '<font><b/><sz val="8"/><name val="Microsoft Sans Serif"/></font>'
           '</fonts>'
-          '<fills count="2"><fill><patternFill patternType="none"/></fill>'
-          '<fill><patternFill patternType="gray125"/></fill></fills>'
-          '<borders count="1"><border/></borders>'
+          '<fills count="4">'
+          '<fill><patternFill patternType="none"/></fill>'
+          '<fill><patternFill patternType="gray125"/></fill>'
+          '<fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/>'
+          '<bgColor indexed="64"/></patternFill></fill>'
+          '<fill><patternFill patternType="solid"><fgColor rgb="FF9DC3E6"/>'
+          '<bgColor indexed="64"/></patternFill></fill>'
+          '</fills>'
+          '<borders count="2">'
+          '<border/>'
+          '<border>'
+          '<left style="thin"><color auto="1"/></left>'
+          '<right style="thin"><color auto="1"/></right>'
+          '<top style="thin"><color auto="1"/></top>'
+          '<bottom style="thin"><color auto="1"/></bottom>'
+          '<diagonal/>'
+          '</border>'
+          '</borders>'
           '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" '
           'borderId="0"/></cellStyleXfs>'
-          '<cellXfs count="2">'
+          '<cellXfs count="8">'
           '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
           '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" '
           'applyFont="1"/>'
+          '<xf numFmtId="0" fontId="0" fillId="2" borderId="1" xfId="0" '
+          'applyFill="1" applyBorder="1"/>'
+          '<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" '
+          'applyFill="1" applyBorder="1"/>'
+          '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" '
+          'applyFont="1" applyFill="1" applyBorder="1"/>'
+          '<xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" '
+          'applyFont="1" applyFill="1" applyBorder="1"/>'
+          '<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" '
+          'applyFont="1" applyBorder="1"/>'
+          '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" '
+          'applyBorder="1"/>'
           '</cellXfs>'
           '<cellStyles count="1"><cellStyle name="Normal" xfId="0" '
           'builtinId="0"/></cellStyles></styleSheet>')
 
 
-def write_summary_xlsx(filename, rows, sheet_name="Sheet1",
+def write_summary_xlsx(filename, rows, merges=None, sheet_name="Sheet1",
                        col_widths=None):
     workbook_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -570,7 +620,7 @@ def write_summary_xlsx(filename, rows, sheet_name="Sheet1",
         '/relationships"><sheets><sheet name="%s" sheetId="1" r:id="rId1"/>'
         '</sheets></workbook>' % escape(sheet_name, {'"': "&quot;"}))
 
-    sheet_xml = build_sheet_xml(rows)
+    sheet_xml = build_sheet_xml(rows, merges=merges)
     if col_widths:
         cols_xml = ('<cols>' + "".join(
             '<col min="%d" max="%d" width="%s" customWidth="1"/>' % (i, i, w)
@@ -636,9 +686,9 @@ def main(argv):
 
     warnings = []
     data = extract(book, warnings)
-    rows = build_summary_rows(data)
-    write_summary_xlsx(output_file, rows,
-                       col_widths=[95, 18, 18, 16, 22, 20, 20, 20])
+    rows, merges = build_summary_rows(data)
+    write_summary_xlsx(output_file, rows, merges=merges,
+                       col_widths=[105, 28, 28, 28, 26, 24, 24, 24])
     print("Written : %s" % output_file)
 
     if warnings:

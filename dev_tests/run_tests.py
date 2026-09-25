@@ -87,6 +87,17 @@ def main():
         print("openpyxl opened '%s' fine: sheet=%r size=%dx%d"
               % (os.path.basename(ACTUAL), ws.title,
                  ws.max_row, ws.max_column))
+        print("merged ranges: %s" % [str(r) for r in ws.merged_cells.ranges])
+        a2 = ws["A2"].fill.fgColor.rgb
+        a3 = ws["A3"].fill.fgColor.rgb
+        f13 = ws["A13"].font.name
+        print("A2 fill=%s A3 fill=%s font=%s" % (a2, a3, f13))
+        if a2 != "FFFFFF00" or a3 != "FF9DC3E6":
+            print("FAILED: unexpected band colours")
+            return 1
+        if not any(str(r).startswith("B13") for r in ws.merged_cells.ranges):
+            print("FAILED: SUMMARY merge missing")
+            return 1
     except ImportError:
         print("(openpyxl not available here - skipped)")
     except Exception as exc:  # noqa: BLE001
