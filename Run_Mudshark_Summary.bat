@@ -45,6 +45,12 @@ echo  %INPUT%
 echo.
 
 rem --- find a Python interpreter -------------------------------
+rem 1) portable Python created by SETUP_Python.bat (no install needed)
+if exist "%~dp0python\python.exe" (
+    "%~dp0python\python.exe" "%SCRIPT%" "%INPUT%"
+    goto :done
+)
+rem 2) any regular Python already on the system
 where py >nul 2>nul
 if not errorlevel 1 (
     py -3 "%SCRIPT%" "%INPUT%"
@@ -63,10 +69,9 @@ if not errorlevel 1 (
 
 echo ERROR: could not find Python on this computer.
 echo.
-echo You do NOT need admin rights to install it. Do ONE of these:
-echo   1. Open the Microsoft Store app, search "Python 3.12", click Get.
-echo   2. Or download python.org's Windows installer and tick
-echo      "Install launcher for all users" OFF and install "for me only".
+echo You do NOT need admin rights or the Microsoft Store:
+echo just double-click  SETUP_Python.bat  once - it downloads and
+echo unpacks a portable Python into this folder automatically.
 echo Then run this BAT file again.
 goto :end
 

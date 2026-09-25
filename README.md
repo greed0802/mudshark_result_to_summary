@@ -9,34 +9,33 @@ a new export lands.
 | File | What it is |
 |---|---|
 | `mudshark_summary.py` | The program (pure Python standard library — **nothing to install** via pip) |
+| `SETUP_Python.bat` | **One-time** helper: downloads a *portable* Python (plain ZIP — no admin, no Store, no installer) |
 | `Run_Mudshark_Summary.bat` | Windows helper — drag & drop the export onto it |
 | `dev_tests/` | Test fixtures & verification (only used for development) |
 
-## Quick start (company laptop, **no admin rights needed**)
+## Quick start (company laptop — **no admin, no Microsoft Store needed**)
 
-You need Python 3.8+ only. Everything else is already inside Python.
+1. **One time only:** double-click `SETUP_Python.bat`.
+   It downloads a *portable* Python ZIP (~11 MB) from python.org and
+   extracts it into a `python` folder next to itself. Nothing is
+   installed — it's just extracted files, so no admin rights are needed
+   and IT policy is untouched. (If Python is already on the machine,
+   skip this step entirely.)
 
-**Don't have Python yet?** Either of these works without admin:
+   *If the download is blocked by the company network, the script shows
+   a link — download it in your browser, right-click → Extract All…
+   into a folder called `python` next to the BAT files. Same result.*
 
-1. **Microsoft Store** — open the Store app, search **"Python 3.12"**
-   (published by the Python Software Foundation), click **Get**.
-   It installs per-user, no admin prompt.
-2. **python.org installer** — during setup, *untick*
-   "Install launcher for all users" and leave "Install for all users"
-   unticked, so it installs just for you.
+2. **Every export:** drag the Mudshark export `.xlsx` onto
+   `Run_Mudshark_Summary.bat`.
+   Or from the command line:
+   ```
+   python\python.exe mudshark_summary.py "C:\path\to\Mudshark Export.xlsx"
+   python\python.exe mudshark_summary.py "C:\path\to\Mudshark Export.xlsx" -o Summary.xlsx
+   ```
 
-**Then run it — two ways:**
-
-* **Easy:** drag the Mudshark export `.xlsx` onto
-  `Run_Mudshark_Summary.bat`.
-* **Command line:**
-  ```
-  py mudshark_summary.py "C:\path\to\Mudshark Export.xlsx"
-  py mudshark_summary.py "C:\path\to\Mudshark Export.xlsx" -o Summary.xlsx
-  ```
-
-The Summary is written next to the export as
-`<export name>_SUMMARY.xlsx` (or the name you give with `-o`).
+3. The Summary is written next to the export as
+   `<export name>_SUMMARY.xlsx` (or the name you give with `-o`).
 
 ## What the Summary contains (and where it comes from)
 
@@ -66,6 +65,11 @@ the hand-made Summary).
   `*_DEBUG_DUMP.csv` (every row of every sheet) next to the export —
   send that CSV to the person maintaining the script so the rule can be
   tuned.
+* If your company blocks **running** the portable `python.exe`
+  (unapproved-software policy — rare, but it happens on very strict
+  builds), say so: the whole converter can also be delivered as an
+  Excel macro (`.xlsm`) that runs inside Excel itself, with no Python
+  at all.
 * You can also force the dump any time with `--debug`:
   ```
   py mudshark_summary.py export.xlsx --debug
