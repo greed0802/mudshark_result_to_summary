@@ -41,12 +41,12 @@ a new export lands.
 
 | Summary row | Source inside the Mudshark export |
 |---|---|
-| **TOTAL SITE CUT** | The `Cut` row of sheet **All Strata Operations** (Exported / Reused / Cut / Site Balance) |
+| **TOTAL SITE CUT** | The `Cut` row of sheet **All Strata Operations** (top outline level — grouped detail rows are ignored) |
 | **SITE CUT ONLY** | `TOTAL SITE CUT` − `TRENCH CUT` |
-| **TRENCH CUT** | Cut-bearing row(s) on sheet **Trench Run Strata Operations** — these rows are often *collapsed/hidden* in the export; the script reads them anyway |
-| **TOTAL TRENCH FILL** | The `…Trenching site` row of **All Strata Operations** (Imported / Fill / Site Balance) |
-| **CLASS 2, CLASS 3, SITE DIRT, …** | Every material row of sheet **Trench Run Materials** (labels are upper-cased) |
-| **TOTAL TRENCH LENGTH** schedule | The `Category : …` and `TrenchNetwork : …` lines of sheet **Trenches**, split into `PIPE/PIT NAME`, `COUNTS`, `LENGTHS` |
+| **TRENCH CUT** | Top-level cut-bearing row(s) on sheet **Trench Run Strata Operations** (grouped per-run duplicates are ignored — prevents double counting) |
+| **TOTAL TRENCH FILL** | The top-level `…Trenching site` row(s) of **All Strata Operations** (Imported / Fill / Site Balance) |
+| **CLASS 2, CLASS 3, SITE DIRT, …** | The **class-level** material rows of sheet **Trench Run Materials** — the per-trench-run breakdown rows grouped underneath are *not* copied |
+| **TOTAL TRENCH LENGTH** schedule | Only the `Category : …` and `TrenchNetwork : …` lines of sheet **Trenches**, split into `PIPE/PIT NAME`, `COUNTS`, `LENGTHS` (grouped `TrenchRun :` / `TrenchSegment` / `A - B` detail lines are *not* copied) |
 
 Number states (Bulked / Compressed / Banked) are copied exactly as
 Mudshark reports them; nothing is re-calculated except

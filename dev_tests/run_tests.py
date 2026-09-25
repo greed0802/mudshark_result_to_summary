@@ -23,7 +23,7 @@ ACTUAL = os.path.join(HERE, "actual_summary.xlsx")
 def sheet_matrix(path):
     book = read_workbook(path)
     rows = next(iter(book.values()))  # first (and only) sheet
-    return {rn: cells for rn, _hidden, cells in rows}
+    return {rn: cells for rn, _hidden, _lvl, cells in rows}
 
 
 def nearly(a, b):
@@ -61,6 +61,35 @@ def compare():
     return problems
 
 
+def trap_checks():
+    """Verify grouped/detail rows from the export are NOT picked up."""
+    matrix = sheet_matrix(ACTUAL)
+    bad_tokens = ("TrenchRun :", "TrenchSegment", "A - B", "UNDER STRUCTURE",
+                  "TRENCH RUN 1", "Trench Run")
+    problems = 0
+    for rn, cells in sorted(matrix.items()):
+        for col, v in cells.items():
+            if isinstance(v, str) and any(tok in v for tok in bad_tokens):
+                print("  TRAP-FAIL row %d col %d: %r" % (rn, col, v))
+                problems += 1
+    labels = {cells.get(1): rn for rn, cells in matrix.items()
+              if isinstance(cells.get(1), str)}
+    ttf = matrix[labels["TOTAL TRENCH FILL"]]
+    if not nearly(ttf.get(6), 458.608016833591):
+        print("  TRAP-FAIL: TOTAL TRENCH FILL imported = %r (dup summed?)"
+              % ttf.get(6))
+        problems += 1
+    so = matrix[labels["SITE CUT ONLY"]]
+    if so.get(2, 1) < 0:
+        print("  TRAP-FAIL: SITE CUT ONLY exported negative: %r" % so.get(2))
+        problems += 1
+    mats = [l for l in labels if l in ("CLASS 2", "CLASS 3", "SITE DIRT")]
+    if len(mats) != 3:
+        print("  TRAP-FAIL: material class rows = %r" % mats)
+        problems += 1
+    return problems
+
+
 def main():
     print("== running mudshark_summary.py on fixture ==")
     r = subprocess.run([sys.executable,
@@ -78,6 +107,13 @@ def main():
         print("FAILED: %d mismatch(es)" % problems)
         return 1
     print("OK - generated Summary matches the hand-made one cell-for-cell.")
+
+    print("== trap-row checks ==")
+    problems = trap_checks()
+    if problems:
+        print("FAILED: %d trap check(s)" % problems)
+        return 1
+    print("OK - grouped detail rows correctly ignored.")
 
     print("== validating output with openpyxl ==")
     try:

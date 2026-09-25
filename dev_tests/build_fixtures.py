@@ -35,6 +35,13 @@ def build_result(path):
     ws.append([])
     ws.append(["All Stormwater Drainage in Trenching site", None, None, None,
                None, 458.608016833591, 458.608016833591, 458.608016833591])
+    # TRAP (seen in a real export): a hidden duplicate of the trenching-site
+    # row lives one outline level deeper; it must NOT be summed in.
+    ws.append(["All Stormwater Drainage in Trenching site", None, None, None,
+               None, 458.608016833591, 458.608016833591, -29.9306489])
+    r = ws.max_row
+    ws.row_dimensions[r].hidden = True
+    ws.row_dimensions[r].outline_level = 1
     ws.append([])
     ws.append([None, 1674.681, 1505.325, 3180.007, 1505.325, 3638.963,
                5144.288, 1964.281])
@@ -68,10 +75,18 @@ def build_result(path):
     ws.append(["Cut", 258.22757067882, 232.201633976261, 490.429204655081,
                None, None, None, -258.22757067882])
     ws.row_dimensions[3].hidden = True
+    # TRAP: per-run cut detail rows one level deeper must not be summed in
+    for i, (lab, e, r_, c) in enumerate([
+            ("Cut - Trench Run 1", 129.11, 116.10, 245.21),
+            ("Cut - Trench Run 2", 129.12, 116.10, 245.22)], start=4):
+        ws.append([lab, e, r_, c, None, None, None, r_ - c])
+        ws.row_dimensions[i].hidden = True
+        ws.row_dimensions[i].outline_level = 1
     # hidden per-network fill rows, like a collapsed outline group
     ws.append(["TrenchNetwork : Stormwater Drainage", None, None, None, None,
                458.608016833591, 458.608016833591, 458.608016833591])
-    ws.row_dimensions[4].hidden = True
+    ws.row_dimensions[6].hidden = True
+    ws.row_dimensions[6].outline_level = 1
     ws.append([None, 0.0, 0.0, 0.0, 0.0, 458.608, 458.608, 458.608])
 
     ws = wb.create_sheet("All Materials")
@@ -117,6 +132,14 @@ def build_result(path):
     ws.append(["Material"] + HDRS[1:])
     ws.append(["Class 2", None, None, None, None, 350.302661775843,
                350.302661775843, 350.302661775843])
+    # TRAP: per-trench-run material breakdown rows grouped under the class
+    for run in (
+            ("375MM RCP PIPES - TRENCH RUN 1 - UNDER STRUCTURE", 7.095730179),
+            ("300MM RCP PIPES - TRENCH RUN 14 - UNDER STRUCTURE",
+             0.682576877)):
+        ws.append([run[0], None, None, None, None, run[1], run[1], run[1]])
+        ws.row_dimensions[ws.max_row].hidden = True
+        ws.row_dimensions[ws.max_row].outline_level = 1
     ws.append([])
     ws.append(["Class 3", None, None, None, None, 69.0068271740277,
                69.0068271740277, 69.0068271740277])
@@ -140,6 +163,11 @@ def build_result(path):
          "622.796m", False),
         ("TrenchNetwork : 150mm UPVC Pipe (32 items) Quantity Total length : "
          "120.851m", True),
+        # TRAP: grouped detail lines under a TrenchNetwork - must be skipped
+        ("TrenchRun : Trench Run 1 (1 item) Quantity Total length : "
+         "32.305m", True),
+        ("TrenchSegment", True),
+        ("A - B", True),
         ("TrenchNetwork : 300mm RCP Pipes (19 items) Quantity Total length : "
          "405.433m", True),
         ("TrenchNetwork : 375mm RCP Pipes (1 item) Quantity Total length : "

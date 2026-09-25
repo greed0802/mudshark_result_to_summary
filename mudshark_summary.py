@@ -64,6 +64,11 @@ CUT_ROW_LABEL = "Cut"
 # A row is treated as "trenching site fill" when its label contains this word
 TRENCH_SITE_HINT = "trench"
 
+# Only these lines are copied from the Trenches sheet into the summary
+# (grouped detail lines like "TrenchRun :", "TrenchSegment", "A - B" are
+# skipped)
+TRENCH_LINE_PREFIXES = ("category :", "trenchnetwork :")
+
 # ---------------------------------------------------------------------------
 # End of CONFIG
 # ---------------------------------------------------------------------------
@@ -147,7 +152,7 @@ def _read_sheet_list(zf):
 
 
 def _read_sheet_rows(zf, path, shared):
-    """Parse one sheet. Returns a list of (row_num, row_is_hidden, cells)."""
+    """Parse one sheet. Returns a list of (row_num, hidden, outline_level, cells)."""
     root = ET.fromstring(zf.read(path))
     rows = []
     prev_num = 0
@@ -160,6 +165,10 @@ def _read_sheet_rows(zf, path, shared):
             row_num = prev_num + 1
         prev_num = row_num
         hidden = row.get("hidden") in ("1", "true")
+        try:
+            outline = int(row.get("outlineLevel") or 0)
+        except (TypeError, ValueError):
+            outline = 0
         cells = {}
         expect_col = 1
         for c in row:
@@ -202,12 +211,12 @@ def _read_sheet_rows(zf, path, shared):
                         value = raw
             if value is not None and value != "":
                 cells[col] = value
-        rows.append((row_num, hidden, cells))
+        rows.append((row_num, hidden, outline, cells))
     return rows
 
 
 def read_workbook(filename):
-    """Read an .xlsx file -> {sheet_name: [(hidden, {col: value}), ...]}."""
+    """Read .xlsx -> {sheet_name: [(row_num, hidden, outline, {col: val})]}."""
     if not zipfile.is_zipfile(filename):
         raise SystemExit(
             "ERROR: '%s' is not an .xlsx file (Mudshark exports .xlsx)." % filename)
@@ -263,8 +272,18 @@ def is_blank_row(cells):
 
 
 def extract(book, warnings):
-    """Pull every piece of information needed for the Summary out of the book."""
+    """Pull every piece of information needed for the Summary out of the book.
+
+    The Mudshark export groups detail rows under collapsible outline levels
+    (the +/- buttons).  The figures we want always sit on the TOP level of
+    each group - e.g. "Class 2" rather than the per-trench-run rows under it -
+    so candidates are filtered down to their minimum outline level.  This
+    prevents double-counting grouped detail rows.
+    """
     data = {}
+
+    def min_level(cands):
+        return min(lvl for lvl, _ in cands) if cands else None
 
     # -- 1. TOTAL SITE CUT: the "Cut" row of the All Strata Operations sheet --
     sheet = find_sheet(book, SHEET_ALL_STRATA)
@@ -275,27 +294,33 @@ def extract(book, warnings):
         strata_rows = []
     else:
         strata_rows = rows_of(book, sheet)
-        data["total_site_cut"] = None
-        for _rn, _hidden, cells in strata_rows:
-            if label_of(cells).lower() == CUT_ROW_LABEL.lower():
-                data["total_site_cut"] = cells
-                break
-        if data["total_site_cut"] is None:
-            warnings.append("Row '%s' not found in sheet '%s' - TOTAL SITE CUT "
-                            "left blank." % (CUT_ROW_LABEL, sheet))
+        matches = [(lvl, cells)
+                   for _rn, _h, lvl, cells in strata_rows
+                   if label_of(cells).lower() == CUT_ROW_LABEL.lower()]
+        if matches:
+            lo = min_level(matches)
+            data["total_site_cut"] = next(c for l, c in matches if l == lo)
+        else:
+            data["total_site_cut"] = None
+            warnings.append("Row '%s' not found in sheet '%s' - TOTAL SITE "
+                            "CUT left blank." % (CUT_ROW_LABEL, sheet))
 
     # -- 2. TOTAL TRENCH FILL: trenching-site row(s) with Imported volume ----
     def trench_fill_from(sheet_rows):
-        total = {6: 0.0, 7: 0.0, 8: 0.0}
-        found = False
-        for _rn, _h, cells in sheet_rows:
-            if TRENCH_SITE_HINT in label_of(cells).lower():
-                for col in (6, 7, 8):
-                    v = num(cells, col)
-                    if v is not None:
-                        total[col] += v
-                        found = True
-        return ({c: v for c, v in total.items() if v != 0.0} if found else None)
+        cands = [(lvl, cells)
+                 for _rn, _h, lvl, cells in sheet_rows
+                 if TRENCH_SITE_HINT in label_of(cells).lower()
+                 and num(cells, 6) is not None]
+        lo = min_level(cands)
+        if lo is None:
+            return None
+        total = {}
+        for col in (6, 7, 8):
+            vals = [num(c, col) for l, c in cands
+                    if l == lo and num(c, col) is not None]
+            if vals:
+                total[col] = sum(vals)
+        return total or None
 
     data["trench_fill"] = trench_fill_from(strata_rows)
     if data["trench_fill"] is None:
@@ -307,60 +332,80 @@ def extract(book, warnings):
                         "left blank.")
 
     # -- 3. Trench run materials (CLASS 2, CLASS 3, SITE DIRT, ...) ----------
+    #     Only the class-level rows: skip the per-trench-run detail rows that
+    #     Mudshark groups underneath each class.
     data["materials"] = []
     m_sheet = find_sheet(book, SHEET_TRENCH_MATERIALS)
     if m_sheet:
-        for _rn, _h, cells in rows_of(book, m_sheet):
+        cands = []
+        for _rn, _h, lvl, cells in rows_of(book, m_sheet):
             name = label_of(cells)
             if not name or name.lower() == "material":
                 continue
-            if not any(num(cells, c) is not None for c in (2, 3, 4, 5, 6, 7, 8)):
+            if "trench run" in name.lower():
+                continue  # per-run detail row, not a class row
+            if not any(num(cells, c) is not None for c in range(2, 9)):
                 continue
-            data["materials"].append((name.upper(), cells))
+            cands.append((lvl, (name.upper(), cells)))
+        lo = min_level(cands)
+        if lo is not None:
+            data["materials"] = [v for l, v in cands if l == lo]
     else:
         warnings.append("Sheet '%s' not found - trench materials left blank."
                         % SHEET_TRENCH_MATERIALS)
 
-    # -- 4. Trench schedule lines (Category / TrenchNetwork) -----------------
+    # -- 4. Trench schedule lines (Category / TrenchNetwork only) ------------
+    #     Grouped detail lines ("TrenchRun :", "TrenchSegment", "A - B", ...)
+    #     are NOT wanted in the summary.
     data["trench_lines"] = []
     t_sheet = find_sheet(book, SHEET_TRENCHES)
     if t_sheet:
-        for _rn, _h, cells in rows_of(book, t_sheet):
+        for _rn, _h, _lvl, cells in rows_of(book, t_sheet):
             text = label_of(cells)
             if not text:
                 continue
-            data["trench_lines"].append(text)
+            if text.lstrip().lower().startswith(TRENCH_LINE_PREFIXES):
+                data["trench_lines"].append(text)
     else:
         warnings.append("Sheet '%s' not found - trench length schedule left "
                         "blank." % SHEET_TRENCHES)
 
     # -- 5. TRENCH CUT: the cut generated by the trench runs -----------------
-    #     Preferred source: cut-bearing row(s) on the Trench-Run strata sheet
-    #     (these rows are often collapsed/hidden in the Mudshark export).
-    trench_cut = []
+    #     Preferred source: top-level cut-bearing row(s) on the Trench-Run
+    #     strata sheet (often collapsed/hidden in the Mudshark export).
+    def cut_candidates(sheet_rows, require_trench_label=False):
+        out = []
+        for _rn, _h, lvl, cells in sheet_rows:
+            lab = label_of(cells)
+            if not lab or num(cells, 4) is None:
+                continue
+            if require_trench_label and (
+                    TRENCH_SITE_HINT not in lab.lower()
+                    or lab.lower() == CUT_ROW_LABEL.lower()):
+                continue
+            out.append((lvl, cells))
+        return out
+
     tr_sheet = find_sheet(book, SHEET_TRENCH_STRATA)
     candidate_sheets = [n for n in (tr_sheet,) if n]
+    cands = []
     for sname in candidate_sheets:
-        for _rn, _h, cells in rows_of(book, sname):
-            # labelled row carrying a Cut volume (totals rows have no label)
-            if label_of(cells) and num(cells, 4) is not None:
-                trench_cut.append(cells)
-    if not trench_cut:
-        # Fallback: any row on any sheet labelled with the trench hint that
-        # carries Cut/Reused/Exported volumes.
+        cands += cut_candidates(rows_of(book, sname))
+    if not cands:
+        # Fallback: trench-labelled cut rows on any other sheet
         for sname, sheet_rows in book.items():
             if sname in candidate_sheets:
                 continue
-            for _rn, _h, cells in sheet_rows:
-                lab = label_of(cells).lower()
-                if (TRENCH_SITE_HINT in lab and num(cells, 4) is not None
-                        and lab != CUT_ROW_LABEL.lower()):
-                    trench_cut.append(cells)
-    if trench_cut:
-        exp = sum(num(c, 2) or 0.0 for c in trench_cut)
-        reu = sum(num(c, 3) or 0.0 for c in trench_cut)
-        cut = sum(num(c, 4) or 0.0 for c in trench_cut)
-        data["trench_cut"] = {"exported": exp, "reused": reu, "cut": cut}
+            cands += cut_candidates(sheet_rows, require_trench_label=True)
+
+    lo = min_level(cands)
+    if lo is not None:
+        chosen = [c for l, c in cands if l == lo]
+        data["trench_cut"] = {
+            "exported": sum(num(c, 2) or 0.0 for c in chosen),
+            "reused": sum(num(c, 3) or 0.0 for c in chosen),
+            "cut": sum(num(c, 4) or 0.0 for c in chosen),
+        }
     else:
         data["trench_cut"] = None
         warnings.append(
@@ -644,12 +689,13 @@ def write_debug_dump(filename, book):
     max_col = 12
     with open(filename, "w", newline="", encoding="utf-8-sig") as fh:
         writer = csv.writer(fh)
-        writer.writerow(["sheet", "row#", "hidden"] +
+        writer.writerow(["sheet", "row#", "outline", "hidden"] +
                         [_col_letter(i) for i in range(1, max_col + 1)])
         for name, rows in book.items():
-            for idx, (row_num, hidden, cells) in enumerate(rows, start=1):
+            for idx, (row_num, hidden, outline, cells) in enumerate(
+                    rows, start=1):
                 writer.writerow(
-                    [name, row_num, "yes" if hidden else ""] +
+                    [name, row_num, outline, "yes" if hidden else ""] +
                     [cells.get(c, "") for c in range(1, max_col + 1)])
 
 
