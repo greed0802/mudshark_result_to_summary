@@ -1,0 +1,21 @@
+name: fetchfiles
+on:
+  workflow_dispatch:
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download files from Google Drive
+        run: |
+          curl -sL "https://drive.google.com/uc?export=download&id=1rdv8qH9i5YnoxbkXBiAx1KM2osTpwgbs&confirm=t" -o result.xlsx
+          curl -sL "https://drive.google.com/uc?export=download&id=1bWC-wqCa0AzzaYxTjSQzS5NoqYijcsUK&confirm=t" -o summary.xlsx
+          ls -la
+          head -c 4 result.xlsx | od -c | head -1
+          head -c 4 summary.xlsx | od -c | head -1
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mudshark-files
+          path: |
+            result.xlsx
+            summary.xlsx
